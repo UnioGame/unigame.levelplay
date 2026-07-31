@@ -204,10 +204,10 @@ namespace UniGame.Ads.Runtime
 
         private void LogAdLoadFailed(string adType, string placementId, string adUnitId, LoadAdError error)
         {
-            GameLog.LogError($"[AdmobAdsService] {adType} ad failed to load: " +
+            GameLog.Log($"[AdmobAdsService] {adType} ad failed to load: " +
                              $"runtimePlatform={Application.platform}, provider={_platformName}, " +
                              $"placement={placementId}, adUnitId={adUnitId}, error={error}, " +
-                             $"responseInfo={error?.GetResponseInfo()}");
+                             $"responseInfo={error?.GetResponseInfo()}",color:Color.red);
         }
 
         private void LogAdImpression(string adType, string placementId, ResponseInfo responseInfo)
