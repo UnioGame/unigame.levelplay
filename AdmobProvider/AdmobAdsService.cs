@@ -33,6 +33,7 @@ namespace UniGame.Ads.Runtime
 
         private string _activePlacement = string.Empty;
         private bool _isInProgress;
+        private bool _rewardedAdReceived;
         private float _reloadAdsInterval;
         private float _lastAdsReloadTime;
         private bool _loadingAds;
@@ -527,8 +528,10 @@ namespace UniGame.Ads.Runtime
             if (rewardedAd != null && rewardedAd.CanShowAd())
             {
                 _activePlacement = placeId;
+                _rewardedAdReceived = false;
                 rewardedAd.Show(reward =>
                 {
+                    _rewardedAdReceived = true;
                     CompleteRewardedVideoAsync(new AdmobRewardedResult
                     {
                         Reward = reward,
@@ -550,7 +553,9 @@ namespace UniGame.Ads.Runtime
             var reward = adResult.Reward;
             
             var error = adError !=null ? adError.GetMessage() : string.Empty;
-            var message = !rewarded ? error : adResult.Message;
+            var message = rewarded
+                ? adResult.Message
+                : string.IsNullOrEmpty(error) ? adResult.Message : error;
             var rewardName = reward != null ? reward.Type : placementId;
             var rewardAmount = reward?.Amount ?? 0f;
             var errorCode = adError?.GetCode() ?? 0;
@@ -574,7 +579,9 @@ namespace UniGame.Ads.Runtime
             {
                 PlacementName = placementId,
                 Message = message,
-                ActionType = PlacementActionType.Rewarded,
+                ActionType = rewarded
+                    ? PlacementActionType.Rewarded
+                    : PlacementActionType.Failed,
                 PlacementType = PlacementType.Rewarded,
                 SdkName = AdmobSdk,
                 Duration = 30,
@@ -635,6 +642,17 @@ namespace UniGame.Ads.Runtime
         
         private void RewardedVideoOnAdFullScreenContentClosedEvent()
         {
+            if (!_rewardedAdReceived)
+            {
+                CompleteRewardedVideoAsync(new AdmobRewardedResult
+                {
+                    Reward = null,
+                    PlacementId = _activePlacement,
+                    Message = "Rewarded ad was closed before reward.",
+                    Error = null,
+                }).Forget();
+            }
+
             KillRewardedAds(_activePlacement);
             
             _adsAction.OnNext(new AdsActionData()
