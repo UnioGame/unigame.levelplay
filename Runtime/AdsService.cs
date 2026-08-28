@@ -81,8 +81,18 @@
 
         public async UniTask<bool> IsPlacementAvailable(string placementName)
         {
+            if (_placementsById.TryGetValue(placementName, out var placement) &&
+                placement.placementType == PlacementType.Interstitial &&
+                !IsInterstitialEnabled())
+                return false;
+
             foreach (var adsService in _adsServices)
             {
+                if (placement != null &&
+                    placement.placementType == PlacementType.Interstitial &&
+                    !IsInterstitialEnabled(adsService.Key))
+                    continue;
+
                 var value = adsService.Value;
                 var isPlacementAvailable = await value.IsPlacementAvailable(placementName);
                 if(isPlacementAvailable) return true;
@@ -94,6 +104,10 @@
         {
             foreach (var adsService in _adsServices)
             {
+                if (placementType == PlacementType.Interstitial &&
+                    !IsInterstitialEnabled(adsService.Key))
+                    continue;
+
                 var value = adsService.Value;
                 var isPlacementAvailable = await value.IsPlacementAvailable(placementType);
                 if(isPlacementAvailable) return true;
@@ -116,6 +130,10 @@
         {
             foreach (var adsService in _adsServices)
             {
+                if (type == PlacementType.Interstitial &&
+                    !IsInterstitialEnabled(adsService.Key))
+                    continue;
+
                 var value = adsService.Value;
                 var isAvailable = await value.IsPlacementAvailable(placement);
                 if(!isAvailable) continue;
@@ -140,6 +158,10 @@
         {
             foreach (var service in _adsServices)
             {
+                if (type == PlacementType.Interstitial &&
+                    !IsInterstitialEnabled(service.Key))
+                    continue;
+
                 var adsService = service.Value;
                 
                 var isAvailable = await adsService.IsPlacementAvailable(type);
@@ -186,10 +208,20 @@
             };
         }
 
+        private bool IsInterstitialEnabled(string platform = null)
+        {
+            return string.IsNullOrEmpty(platform)
+                ? _adsServices.Keys.Any(_adsData.IsInterstitialEnabled)
+                : _adsData.IsInterstitialEnabled(platform);
+        }
+
         public async UniTask<AdsShowResult> ShowInterstitialAdAsync(string placementId)
         {
             foreach (var service in _adsServices)
             {
+                if (!IsInterstitialEnabled(service.Key))
+                    continue;
+
                 var adsService = service.Value;
                 
                 var isAvailable = await adsService.IsPlacementAvailable(placementId);

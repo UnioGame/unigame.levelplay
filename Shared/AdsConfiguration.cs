@@ -39,6 +39,9 @@
             var placements = new Dictionary<string, PlatformAdsPlacement>();
             foreach (var placement in adsData.placements)
             {
+                if (placement.placementType == PlacementType.Interstitial &&
+                    !adsData.IsInterstitialEnabled(platform))
+                    continue;
                 foreach (var platformData in placement.placements)
                 {
                     if(platformData.platform != platform)
