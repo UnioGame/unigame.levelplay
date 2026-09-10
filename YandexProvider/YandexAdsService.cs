@@ -26,6 +26,7 @@ namespace UniGame.Ads.Runtime
         private float _lastAdsReloadTime;
         private bool _loadingAds;
         private bool _isInProgress;
+        private bool _rewardedAdReceived;
         private string _activePlacement = string.Empty;
 
         private Subject<AdsActionData> _adsAction = new();
@@ -218,6 +219,7 @@ namespace UniGame.Ads.Runtime
             }
 
             _isInProgress = true;
+            _rewardedAdReceived = false;
             _activePlacement = placement;
 
             _adsAction.OnNext(new AdsActionData()
@@ -391,6 +393,7 @@ namespace UniGame.Ads.Runtime
 
         public void YandexRewardAdFailedToShowEvent(object sender, AdFailureEventArgs args)
         {
+            CompleteActiveRewardedShowAsFailed(args.Message);
             _adsAction.OnNext(new AdsActionData()
             {
                 PlacementName = _activePlacement,
@@ -404,11 +407,18 @@ namespace UniGame.Ads.Runtime
 
         public void YandexRewardAdDismissedEvent(object sender, EventArgs args)
         {
+            var actionType = _rewardedAdReceived
+                ? PlacementActionType.Closed
+                : PlacementActionType.Failed;
+
+            if (!_rewardedAdReceived)
+                CompleteActiveRewardedShowAsFailed("Rewarded ad was dismissed before reward.");
+
             _adsAction.OnNext(new AdsActionData()
             {
                 PlacementName = _activePlacement,
-                Message = "Ad dissmissed",
-                ActionType = PlacementActionType.Failed,
+                Message = "Ad dismissed.",
+                ActionType = actionType,
                 PlacementType = PlacementType.Rewarded,
             });
             DestroyRewardedAd();
@@ -429,6 +439,7 @@ namespace UniGame.Ads.Runtime
 
         public void YandexRewardAdRewardedEvent(object sender, Reward args)
         {
+            _rewardedAdReceived = true;
             var placementId = _activePlacement;
 
             var rewardedResult = new AdsShowResult
@@ -460,6 +471,20 @@ namespace UniGame.Ads.Runtime
                 _rewardedAd.Destroy();
                 _rewardedAd = null;
             }
+        }
+
+        private void CompleteActiveRewardedShowAsFailed(string message)
+        {
+            if (!_isInProgress || string.IsNullOrEmpty(_activePlacement))
+                return;
+
+            AddPlacementResult(
+                _activePlacement,
+                PlacementType.Rewarded,
+                rewarded: false,
+                error: true,
+                message: message);
+            _isInProgress = false;
         }
 
         #region private methods
