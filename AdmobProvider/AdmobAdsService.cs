@@ -13,9 +13,10 @@ namespace UniGame.Ads.Runtime
     using UniGame.Runtime.Rx;
 
     [Serializable]
-    public class AdmobAdsService : IAdsService
+    public class AdmobAdsService : IAdsService, IAdsConsentFlow
     {
         private const string MediationGroupNameKey = "mediation_group_name";
+        private const string ConsentLogTag = "[AdsConsent]";
 
 #if UNITY_ANDROID
         private const string TestInterstitialPlacementId = "ca-app-pub-3940256099942544/1033173712";
@@ -36,6 +37,11 @@ namespace UniGame.Ads.Runtime
         private float _reloadAdsInterval;
         private float _lastAdsReloadTime;
         private bool _loadingAds;
+        private bool _canRequestAds;
+        private bool _mobileAdsInitializationStarted;
+        private bool _consentChangesSubscribed;
+        private UniTask _consentFlowTask;
+        private bool _consentFlowStarted;
 
         private List<AdsShowResult> _rewardedHistory = new();
         private Dictionary<string,AdsShowResult> _awaitedRewards = new();
@@ -46,11 +52,13 @@ namespace UniGame.Ads.Runtime
         private InterstitialAd _interstitialAdCache = null;
 
         private Dictionary<string, AdmobRewardedAdsCache> _rewardedAdsCache = new();
+        private IAdsConsentService _consentService;
 
         public AdmobAdsService(
             string platformName,
             AdsDataConfiguration config,
-            Dictionary<string,PlatformAdsPlacement> placements)
+            Dictionary<string,PlatformAdsPlacement> placements,
+            IAdsConsentService consentService)
         {
             GameLog.Log($"[AdmobAdsService] create ads service", Color.cyan);
 
@@ -59,6 +67,7 @@ namespace UniGame.Ads.Runtime
             _reloadAdsInterval = config.reloadAdsInterval;
             _lastAdsReloadTime = -_reloadAdsInterval;
             _placements = placements;
+            _consentService = consentService;
  
             SubscribeToEvents();
         }
@@ -68,11 +77,59 @@ namespace UniGame.Ads.Runtime
         public Observable<AdsActionData> AdsAction => _adsAction;
         public bool IsInProgress => _isInProgress;
 
+        public UniTask RunAsync()
+        {
+            if (_consentFlowStarted)
+                return _consentFlowTask;
+
+            _consentFlowStarted = true;
+            GameLog.Log($"{ConsentLogTag} consent flow started", Color.cyan);
+            _consentFlowTask = RunConsentFlowAsync();
+            return _consentFlowTask;
+        }
+
         public async UniTask InitializeAsync()
         {
             GameLog.Log($"[AdmobAdsService] initialize ads service: " +
                         $"runtimePlatform={Application.platform}, provider={_platformName}", Color.cyan);
 
+            await GatherConsentAsync();
+            await InitializeMobileAdsAsync();
+        }
+
+        public async UniTask GatherConsentAsync()
+        {
+            await _consentService.GatherConsentAsync();
+            _canRequestAds = _consentService.CanRequestAds;
+            SubscribeToConsentChanges();
+        }
+
+        private async UniTask RunConsentFlowAsync()
+        {
+            await _consentService.ShowConsentFormAsync();
+
+            _canRequestAds = _consentService.CanRequestAds;
+            GameLog.Log($"{ConsentLogTag} consent result: canRequestAds={_canRequestAds}, " +
+                        $"privacyOptionsRequired={_consentService.PrivacyOptionsRequired}", Color.cyan);
+            Debug.Log($"{ConsentLogTag} admob initialization gate: canRequestAds={_canRequestAds}");
+            SubscribeToConsentChanges();
+
+            await InitializeMobileAdsAsync();
+            GameLog.Log($"{ConsentLogTag} flow completed", Color.cyan);
+        }
+
+        public async UniTask InitializeMobileAdsAsync()
+        {
+            _canRequestAds = _consentService.CanRequestAds;
+            
+            if (!_canRequestAds)
+                return;
+            
+            if (_mobileAdsInitializationStarted)
+                return;
+
+            _mobileAdsInitializationStarted = true;
+            
             MobileAds.Initialize(SdkInitializationCompletedEvent);
             
             var isInitialized = await _isInitialized
@@ -103,12 +160,18 @@ namespace UniGame.Ads.Runtime
 
         public void LoadAdsAction(AdsActionData actionData)
         {
+            if (!_canRequestAds)
+                return;
+
             if (actionData.PlacementType == PlacementType.Interstitial && actionData.ActionType == PlacementActionType.Closed)
                 LoadInterstitialAd(actionData.PlacementName).Forget();
         }
 
         public async UniTask<bool> LoadRewardedAd(string placementId)
         {
+            if (!_canRequestAds)
+                return false;
+
             if (!_placements.TryGetValue(placementId, out var placementData))
             {
                 GameLog.LogError($"[AdmobAdsService] haven't ads with id {placementId}");
@@ -221,6 +284,9 @@ namespace UniGame.Ads.Runtime
 
         public async UniTask<bool> LoadInterstitialAd(string placementId)
         {
+            if (!_canRequestAds)
+                return false;
+
             if (!_placements.TryGetValue(placementId, out var placementData))
             {
                 GameLog.LogError($"[AdmobAdsService] haven't ads with id {placementId}");
@@ -431,6 +497,9 @@ namespace UniGame.Ads.Runtime
         
         public async UniTask<bool> IsPlacementAvailable(string placementName)
         {
+            if (!_canRequestAds)
+                return false;
+
             if(_placements.TryGetValue(placementName,out PlatformAdsPlacement adsPlacement) == false)
             {
                 GameLog.LogError($"[AdmobAdsService]: Placement not found: {placementName}");
@@ -504,6 +573,18 @@ namespace UniGame.Ads.Runtime
         private void SubscribeToEvents()
         {
             _adsAction.Subscribe(LoadAdsAction).AddTo(_lifeTime);
+        }
+
+        private void SubscribeToConsentChanges()
+        {
+            if (_consentChangesSubscribed)
+                return;
+
+            _consentChangesSubscribed = true;
+            _consentService.CanRequestAdsChanged
+                .Where(canRequestAds => canRequestAds)
+                .Subscribe(_ => InitializeMobileAdsAsync().Forget())
+                .AddTo(_lifeTime);
         }
         
         #region rewarded block
